@@ -364,6 +364,10 @@ SUPPORT_FP8_OPS = args.supports_fp8_compute
 
 AMD_RDNA2_AND_OLDER_ARCH = ["gfx1030", "gfx1031", "gfx1010", "gfx1011", "gfx1012", "gfx906", "gfx900", "gfx803"]
 AMD_ENABLE_MIOPEN_ENV = 'COMFYUI_ENABLE_MIOPEN'
+# RDNA3 architectures where AOTriton mem_efficient attention has known accuracy issues
+# (NaN/inf output causing black images). See: https://github.com/ROCm/aotriton/releases (gfx1100 accuracy notes)
+AMD_RDNA3_SDPA_WORKAROUND_ARCH = ["gfx1100", "gfx1101", "gfx1151"]
+AMD_DETECTED_ARCH = None
 
 try:
     if is_amd():
@@ -390,6 +394,7 @@ try:
                 return True
             return False
 
+        AMD_DETECTED_ARCH = arch
         logging.info("AMD arch: {}".format(arch))
         logging.info("ROCm version: {}".format(rocm_version))
         if args.use_split_cross_attention == False and args.use_quad_cross_attention == False:
@@ -411,7 +416,15 @@ except:
 if ENABLE_PYTORCH_ATTENTION:
     torch.backends.cuda.enable_math_sdp(True)
     torch.backends.cuda.enable_flash_sdp(True)
-    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    if AMD_DETECTED_ARCH is not None and any((a in AMD_DETECTED_ARCH) for a in AMD_RDNA3_SDPA_WORKAROUND_ARCH):
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        logging.warning("Disabled mem_efficient SDPA on AMD {} due to known AOTriton accuracy issues. "
+                        "Set COMFYUI_FORCE_MEM_EFFICIENT_SDP=1 to override.".format(AMD_DETECTED_ARCH))
+        if os.getenv("COMFYUI_FORCE_MEM_EFFICIENT_SDP") == "1":
+            torch.backends.cuda.enable_mem_efficient_sdp(True)
+            logging.info("Re-enabled mem_efficient SDPA due to COMFYUI_FORCE_MEM_EFFICIENT_SDP=1")
+    else:
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 
 PRIORITIZE_FP16 = False  # TODO: remove and replace with something that shows exactly which dtype is faster than the other
